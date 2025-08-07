@@ -1,5 +1,24 @@
-﻿.venv/
+﻿# Ambiente virtual
+.venv/
+env/
+
+# Cache do Python
 __pycache__/
+*.py[cod]
+*.so
+
+# Distribuição / pacotes
 *.egg-info/
+dist/
+build/
+
+# Saída gerada pelo programa
 output/
-*.pyc
+
+# Configurações locais / IDE
+.vscode/
+.idea/
+
+# Arquivos temporários
+.DS_Store
+Thumbs.db
