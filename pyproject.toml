@@ -1,0 +1,22 @@
+[project]
+name = "engligen"
+version = "0.1.0"
+description = "Gerador de exercícios de Inglês em formato de imagem."
+readme = "README.md"
+requires-python = ">=3.9"
+
+dependencies = [
+    "pillow",
+    "typer[all]",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "mypy",
+    "ruff",
+]
+
+# ADICIONE ESTA SEÇÃO
+[project.scripts]
+engligen = "engligen.main:run"
