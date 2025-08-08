@@ -7,8 +7,8 @@ from engligen.rendering.clue_generator import ClueGenerator
 
 class ImageRenderer:
     """
-    Renderiza a grade de palavras cruzadas, incluindo números e setas
-    para indicar a direção das palavras (estilo "Coquetel").
+    Renderiza a grade de palavras cruzadas, incluindo números e indicadores
+    de direção de forma clara e bem posicionada.
     """
     def __init__(
         self,
@@ -27,13 +27,13 @@ class ImageRenderer:
         self.BLACK = (0, 0, 0)
         self.TEXT_COLOR = (0, 0, 0)
         
-        # Calcula dimensões da imagem
+        # Dimensões da imagem
         self.grid_width = self.crossword.width * self.cell_size
         self.grid_height = self.crossword.height * self.cell_size
         self.image_width = self.grid_width + 2 * self.padding
         self.image_height = self.grid_height + 2 * self.padding
 
-        # Inicializa a imagem e o objeto de desenho
+        # Inicializa a imagem
         self.image = Image.new("RGB", (self.image_width, self.image_height), self.BG_COLOR)
         self.draw = ImageDraw.Draw(self.image)
 
@@ -41,10 +41,13 @@ class ImageRenderer:
         try:
             self.letter_font = ImageFont.truetype("arial.ttf", int(self.cell_size * 0.6))
             self.number_font = ImageFont.truetype("arialbd.ttf", int(self.cell_size * 0.28))
+            # Fonte menor para os indicadores de direção
+            self.indicator_font = ImageFont.truetype("arial.ttf", int(self.cell_size * 0.25))
         except IOError:
-            print("Fontes Arial não encontradas. Usando fontes padrão.")
+            print("⚠️  Aviso: Fontes Arial não encontradas. Usando fontes padrão.")
             self.letter_font = ImageFont.load_default()
             self.number_font = ImageFont.load_default()
+            self.indicator_font = ImageFont.load_default()
 
     def _draw_grid_and_answers(self, include_answers: bool):
         """Desenha a grade e as letras (se for o gabarito)."""
@@ -56,6 +59,8 @@ class ImageRenderer:
                 y2 = y1 + self.cell_size
                 
                 if self.crossword.grid[r][c] is None:
+                    # Células não usadas podem ser preenchidas ou deixadas em branco.
+                    # Preencher de preto é o estilo clássico.
                     self.draw.rectangle([x1, y1, x2, y2], fill=self.BLACK)
                 else:
                     self.draw.rectangle([x1, y1, x2, y2], outline=self.BLACK, fill=self.BG_COLOR)
@@ -66,50 +71,47 @@ class ImageRenderer:
                             letter, font=self.letter_font, fill=self.TEXT_COLOR, anchor="mm"
                         )
 
-    def _get_arrow_corner_for_single_clue(self, direction: str) -> tuple:
-        """Determina o canto para a seta de uma única dica na célula."""
-        if direction == "horizontal": return ("top_left", "top_right")
-        if direction == "vertical": return ("top_left", "bottom_left")
-        if direction == "horizontal_rev": return ("bottom_right", "bottom_left")
-        if direction == "vertical_rev": return ("bottom_right", "top_right")
-        return ()
+    def _draw_clues_and_indicators(self):
+        """
+        NOVA LÓGICA: Desenha os números das dicas e os indicadores de direção (→, ↓)
+        de forma inteligente dentro da célula.
+        """
+        # Margem interna para o posicionamento dos elementos
+        cell_padding = self.cell_size * 0.1
 
-    def _draw_coquetel_arrow(self, r: int, c: int, corner_position: str):
-        """Desenha uma seta pequena no canto da célula."""
-        arrow_size = self.cell_size * 0.18
-        x1, y1, _, _ = (self.padding + c * self.cell_size, self.padding + r * self.cell_size, 0, 0)
-
-        if corner_position == "top_left":
-            points = [(x1, y1), (x1 + arrow_size, y1), (x1, y1 + arrow_size)]
-        elif corner_position == "top_right":
-            points = [(x1 + self.cell_size, y1), (x1 + self.cell_size - arrow_size, y1), (x1 + self.cell_size, y1 + arrow_size)]
-        elif corner_position == "bottom_left":
-            points = [(x1, y1 + self.cell_size), (x1, y1 + self.cell_size - arrow_size), (x1 + arrow_size, y1 + self.cell_size)]
-        elif corner_position == "bottom_right":
-            points = [(x1 + self.cell_size, y1 + self.cell_size), (x1 + self.cell_size, y1 + self.cell_size - arrow_size), (x1 + self.cell_size - arrow_size, y1 + self.cell_size)]
-        else:
-            return
-            
-        self.draw.polygon(points, fill=self.BLACK)
-
-    def _draw_clues(self):
-        """Desenha os números das dicas e as setas."""
         for (r, c), clues in self.clue_generator.clue_positions.items():
             num = clues[0]['num']
-            x_pos = self.padding + c * self.cell_size + (self.cell_size * 0.12)
-            y_pos = self.padding + r * self.cell_size + (self.cell_size * 0.08)
-            self.draw.text((x_pos, y_pos), num, font=self.number_font, fill=self.BLACK)
             
-            # Lógica para desenhar setas e/ou linhas diagonais
-            if len(clues) == 1:
-                corners = self._get_arrow_corner_for_single_clue(clues[0]['dir'])
-                if corners:
-                    self._draw_coquetel_arrow(r, c, corners[0])
-                    self._draw_coquetel_arrow(r, c, corners[1])
-            else: # Célula com dica horizontal e vertical
-                x1 = self.padding + c * self.cell_size
-                y1 = self.padding + r * self.cell_size
-                self.draw.line([(x1, y1), (x1 + self.cell_size, y1 + self.cell_size)], fill=self.BLACK, width=1)
+            # Posição base para o número no canto superior esquerdo
+            x_base = self.padding + c * self.cell_size + cell_padding
+            y_base = self.padding + r * self.cell_size + cell_padding
+            
+            # Desenha o número da dica
+            self.draw.text((x_base, y_base), num, font=self.number_font, fill=self.BLACK, anchor="lt")
+            
+            # Pega a bounding box do número para posicionar os indicadores ao lado
+            try: # O método textbbox é mais preciso
+                num_bbox = self.draw.textbbox((x_base, y_base), num, font=self.number_font, anchor="lt")
+                indicator_x_start = num_bbox[2] + self.cell_size * 0.05 # Posição X após o número
+            except AttributeError: # Fallback para versões mais antigas da Pillow
+                indicator_x_start = x_base + self.cell_size * 0.2 # Posição X estimada
+
+            indicator_y_start = y_base + self.cell_size * 0.02
+
+            # Desenha os indicadores para cada direção originada nesta célula
+            for clue_info in clues:
+                direction = clue_info.get('dir')
+                indicator = ''
+                if direction == 'horizontal':
+                    indicator = '→'
+                elif direction == 'vertical':
+                    indicator = '↓'
+                
+                if indicator:
+                    self.draw.text((indicator_x_start, indicator_y_start), indicator, font=self.indicator_font, fill=self.BLACK, anchor="lt")
+                    # Move a posição X para o próximo indicador, caso haja mais de um
+                    indicator_x_start += self.cell_size * 0.2
+
 
     def generate_image(self, filename: str, answers: bool = False, dpi: int = 300):
         """Orquestra o desenho e salva a imagem final."""
@@ -117,8 +119,10 @@ class ImageRenderer:
         os.makedirs("output", exist_ok=True)
         
         self._draw_grid_and_answers(answers)
+        
+        # Só desenha os números e indicadores na folha de exercício
         if not answers:
-            self._draw_clues()
+            self._draw_clues_and_indicators()
             
         self.image.save(filepath, dpi=(dpi, dpi), optimize=True)
-        print(f"Imagem '{filename}' gerada com sucesso em {dpi} DPI!")
+        print(f"🖼️  Imagem '{filename}' gerada com sucesso!")
