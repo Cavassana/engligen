@@ -1,0 +1,43 @@
+engligen/
+│
+├── .venv/                   # Pasta do ambiente virtual Python (isolamento de dependências)
+│
+├── data/                    # Dados de entrada, como listas de palavras
+│   └── wordlists/
+│       └── banco_curinga_geral.json
+│       └── capitulo1.txt
+│       └── unidade_1_word_bank.json
+│   └── config.json
+│
+├── output/                  # Onde as imagens geradas (exercícios e soluções) serão salvas
+│   └── crossword_2025-08-05.png
+│
+├── src/                     # Pasta principal do código-fonte ("source")
+│   └── engligen/           # O pacote Python do nosso projeto
+│       │
+│       ├── __init__.py      # Torna o diretório um pacote Python
+│       ├── main.py          # Ponto de entrada da aplicação (interface de linha de comando)
+│       │
+│       ├── core/            # Lógica principal, independente de interface
+│       │   ├── __init__.py
+│       │   └── crossword.py   # Lógica para gerar a grade de palavras-cruzadas
+│       │   └── word_search.py # (Futuro) Lógica para o "caça-palavras"
+│       │
+│       ├── rendering/       # Módulos responsáveis pela parte visual
+│       │   ├── __init__.py
+│       │   ├── clue_generator.py
+│       │   └── image_renderer.py # Desenha a grade, palavras e pistas em uma imagem
+│       │
+│       └── utils/           # Funções utilitárias
+│           ├── __init__.py
+│           └── file_handler.py # Funções para ler/salvar arquivos
+│
+├── tests/                   # Testes automatizados para garantir que o código funciona
+│   ├── __init__.py
+│   ├── test_crossword_logic.py
+│   └── test_image_renderer.py
+│
+├── .gitignore               # Arquivo para o Git ignorar pastas e arquivos (como .venv e output)
+├── pyproject.toml           # Arquivo de configuração do projeto (padrão moderno)
+└── README.md                # Documentação principal do projeto
+└── estrutura_do_projeto.txt                # Esse documento
