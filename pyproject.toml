@@ -19,4 +19,4 @@ dev = [
 
 # ADICIONE ESTA SEÇÃO
 [project.scripts]
-engligen = "engligen.main:run"
+engligen = "engligen.main:app"
