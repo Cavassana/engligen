@@ -1,4 +1,37 @@
 {
-  "themed_words_file": "data/wordlists/unidade_1_word_bank.json",
-  "common_words_file": "data/wordlists/banco_curinga_geral.json"
+  "common_words_file": "data/wordlists/banco_curgeneral_words.json",
+  "course": {
+    "include_previous_units": true,
+    "active_unit": "u1",
+    "units": [
+      {
+        "slug": "u1",
+        "name": "Unit 1 – Adam Smith",
+        "themed_words_file": "data/wordlists/unit01_thematic_words.json"
+      },
+      {
+        "slug": "u2",
+        "name": "Unit 2 – Division of Labour",
+        "themed_words_file": "data/wordlists/unit02_thematic_words.json"
+      }
+    ]
+  },
+  "used_words": {
+    "common_file": "data/wordlists/used_common.json",
+    "themed_file": "data/wordlists/used_thematic.json"
+  },
+  "renderer": {
+    "ink_saver": true,
+    "header_text": "Crossword – Unit 01: Adam Smith",
+    "watermark_text": null,
+    "arrow_gap_px": 2,
+    "corner_pad": 2,
+    "prefill": {
+      "mode": "first",
+      "include_across": true,
+      "include_down": false,
+      "percent": 10,
+      "seed": 42
+    }
+  }
 }

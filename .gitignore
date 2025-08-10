@@ -1,16 +1,44 @@
 ﻿# Ambiente virtual
 .venv/
 env/
+.venv*/
+env*/
 
 # Cache do Python
 __pycache__/
 *.py[cod]
+*.pyd
+*.pyo
 *.so
 
-# Distribuição / pacotes
+# Distribuição / build
+*.egg
 *.egg-info/
+.eggs/
 dist/
 build/
+pip-wheel-metadata/
+
+# Testes / coverage / linters
+.pytest_cache/
+.coverage
+.coverage.*
+.cache
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.mypy_cache/
+.pyright/
+.ruff_cache/
+.dmypy.json
+pytestdebug.log
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Logs
+*.log
 
 # Saída gerada pelo programa
 output/
@@ -18,7 +46,26 @@ output/
 # Configurações locais / IDE
 .vscode/
 .idea/
+*.code-workspace
 
-# Arquivos temporários
+# Arquivos temporários do SO
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# ---------------- Engligen ----------------
+# Histórico de palavras (estado, não versionar)
+data/wordlists/used_common.json
+data/wordlists/used_thematic.json
+# Legado (não usar mais, mas ignore se existir)
+data/wordlists/used_words.json
+
+# Perfil de configuração ativo (troca a cada execução)
+data/config.json
+# Mantenha os perfis por unidade versionados
+!data/config_*.json
+
+# Variáveis de ambiente (se usadas)
+.env
+.env.*
+*.local.json

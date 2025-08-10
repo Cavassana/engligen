@@ -1,24 +1,25 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "engligen"
-version = "0.1.0"
+version = "0.2.0"
 description = "Gerador de exercícios de Inglês em formato de imagem."
 readme = "README.md"
-requires-python = ">=3.9"
-
-dependencies = [
-    "pillow",
-    # Typer não é mais necessário para o menu, pode ser removido se quiser
-    # "typer[all]", 
-]
+requires-python = ">=3.10"
+dependencies = ["pillow"]
 
 [project.optional-dependencies]
-dev = [
-    "pytest",
-    "mypy",
-    "ruff",
-]
+dev = ["pytest", "mypy", "ruff"]
 
-# ---- ALTERAÇÃO NECESSÁRIA AQUI ----
+# Gera o comando de terminal "engligen"
 [project.scripts]
-# Mude de 'engligen.main:app' para 'engligen.main:run'
 engligen = "engligen.main:run"
+
+# Diz ao setuptools que o código está em src/
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
