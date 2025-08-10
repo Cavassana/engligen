@@ -7,7 +7,8 @@ requires-python = ">=3.9"
 
 dependencies = [
     "pillow",
-    "typer[all]",
+    # Typer não é mais necessário para o menu, pode ser removido se quiser
+    # "typer[all]", 
 ]
 
 [project.optional-dependencies]
@@ -17,6 +18,7 @@ dev = [
     "ruff",
 ]
 
-# ADICIONE ESTA SEÇÃO
+# ---- ALTERAÇÃO NECESSÁRIA AQUI ----
 [project.scripts]
-engligen = "engligen.main:app"
+# Mude de 'engligen.main:app' para 'engligen.main:run'
+engligen = "engligen.main:run"
