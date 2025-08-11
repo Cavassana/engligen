@@ -17,8 +17,8 @@
     ]
   },
   "used_words": {
-    "common_file": "data/wordlists/used_common.json",
-    "themed_file": "data/wordlists/used_thematic.json"
+  "common_file": "used_common.json",
+  "themed_file": "used_thematic.json"
   },
   "renderer": {
     "ink_saver": true,
@@ -33,5 +33,11 @@
       "percent": 10,
       "seed": 42
     }
+  },
+  "wordsearch": {
+    "max_words": 24,
+    "target_occupancy": 0.4,
+    "min_words": 12,
+    "seed": 42
   }
 }

@@ -1,404 +1,315 @@
-
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
-from typing import Any, Dict, Optional, List, Tuple
+from typing import List, Optional, Tuple, Dict
 
 from engligen.app import EngligenApp
 
 
-# -------------------- Helpers --------------------
-
-def _ask_bool(prompt: str, default: bool = True) -> bool:
-    """Pergunta s/n (Enter usa default)."""
-    default_txt = "Sim" if default else "Não"
-    while True:
-        s = input(f"{prompt} [Enter={default_txt} | s/n]: ").strip().lower()
-        if s == "":
+# ----------------- helpers -----------------
+def _ask(prompt: str, default: Optional[str] = None) -> str:
+    if default is None:
+        v = input(f"{prompt}: ").strip()
+    else:
+        v = input(f"{prompt} [{default}]: ").strip()
+        if v == "":
             return default
-        if s in {"s", "sim", "y", "yes"}:
-            return True
-        if s in {"n", "nao", "não", "no"}:
-            return False
-        print("Resposta inválida. Digite s/n ou Enter para manter o padrão.")
+    return v
 
-
-def _ask_then_confirm_str(prompt: str, default: Optional[str] = None, allow_empty: bool = False) -> str:
-    """1) pergunta; 2) confirma; 3) se 'não', repete."""
+def _ask_yes_no(prompt: str, default_yes: bool = True) -> bool:
+    hint = "Enter=Sim | s/n" if default_yes else "Enter=Não | s/n"
     while True:
-        suffix = f" [{default}]" if default is not None else ""
-        s = input(f"{prompt}{suffix}: ").strip()
-        if s == "":
-            if default is None and not allow_empty:
-                print("Valor não pode ser vazio.")
-                continue
-            value = "" if default is None else default
-        else:
-            value = s
-        if _ask_bool(f"Confirma o valor: '{value}'?", default=True):
-            return value
+        v = input(f"{prompt} [{hint}]: ").strip().lower()
+        if v == "" and default_yes: return True
+        if v == "" and not default_yes: return False
+        if v in ("s","sim","y","yes"): return True
+        if v in ("n","nao","não","no"): return False
+        print("Resposta inválida. Digite s/n ou Enter para padrão.")
 
-
-def _ask_then_confirm_float(prompt: str, default: float, min_value: Optional[float] = None, max_value: Optional[float] = None) -> float:
+def _ask_int(prompt: str, default: int) -> int:
     while True:
-        s = input(f"{prompt} [{default}]: ").strip()
-        if s == "":
-            v = float(default)
-        else:
-            try:
-                v = float(s)
-            except ValueError:
-                print("Valor inválido. Digite um número.")
-                continue
-        if min_value is not None and v < min_value:
-            print(f"Valor mínimo: {min_value}")
-            continue
-        if max_value is not None and v > max_value:
-            print(f"Valor máximo: {max_value}")
-            continue
-        if _ask_bool(f"Confirma o valor: {v}?", default=True):
-            return v
+        raw = input(f"{prompt} [{default}]: ").strip()
+        if raw == "":
+            return int(default)
+        try:
+            return int(raw)
+        except ValueError:
+            print("Valor inválido (inteiro).")
+
+def _ask_float(prompt: str, default: float) -> float:
+    while True:
+        raw = input(f"{prompt} [{default}]: ").strip()
+        if raw == "":
+            return float(default)
+        try:
+            return float(raw.replace(",", "."))
+        except ValueError:
+            print("Valor inválido (número). Use ponto ou vírgula, ex.: 0.4")
+
+def _confirm_value(label: str, val: str) -> bool:
+    return _ask_yes_no(f"Confirma o valor: '{val}'?", True)
 
 
-# --------- Descoberta automática de arquivos (.json) ---------
+# ----------------- autodetecção -----------------
+def _scan_wordlists(root: Path) -> List[Path]:
+    root.mkdir(parents=True, exist_ok=True)
+    out: List[Path] = []
+    for p in sorted(root.glob("*.json")):
+        if p.name.startswith("used_"): continue
+        if p.name.startswith("config"): continue
+        out.append(p)
+    return out
 
-_SKIP_PATTERNS = ("used_common.json", "used_thematic.json", "used_words.json", "config", "_clues.txt")
-
-def _default_wordlist_dir(project_root: Path) -> Path:
-    return (project_root / "data" / "wordlists").resolve()
-
-def _is_candidate_json(p: Path) -> bool:
-    name = p.name.lower()
-    if not p.suffix.lower() == ".json":
-        return False
-    if any(k in name for k in _SKIP_PATTERNS):
-        return False
-    return True
-
-def _validate_wordlist_file(path: Path) -> Tuple[int, int]:
-    """
-    Retorna (validos, total). Considera válido item que possua 'word' str não-vazia.
-    """
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, list):
-            return (0, 0)
-        total = len(data)
-        valid = 0
-        for it in data:
-            if isinstance(it, dict) and isinstance(it.get("word"), str) and it.get("word").strip():
-                valid += 1
-        return (valid, total)
-    except Exception:
-        return (0, 0)
-
-def _guess_role(name: str) -> Optional[str]:
+def _suggest_role(name: str) -> str:
     n = name.lower()
-    if any(k in n for k in ["common", "general", "coringa", "geral"]):
+    if "general" in n or "common" in n or "coringa" in n:
         return "common"
-    if any(k in n for k in ["thematic", "tema", "tematico", "temático", "unit", "unidade", "u0", "u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9"]):
+    if "thematic" in n or "unit" in n or "tema" in n or "u" in n:
         return "themed"
-    return None
+    return "?"
 
-def _auto_detect_wordlists(project_root: Path) -> Tuple[Optional[str], Optional[List[str]]]:
-    """
-    Escaneia a pasta padrão e sugere arquivos para coringa/temático.
-    Retorna (common_path, themed_paths) ou (None, None) se nada decidido.
-    """
-    folder = _default_wordlist_dir(project_root)
-    if not folder.exists():
-        return (None, None)
+def _pick_files_interactive(base: Path) -> Tuple[Optional[str], List[str]]:
+    files = _scan_wordlists(base)
+    if not files:
+        print("Nenhum .json encontrado em data/wordlists/.")
+        return (None, [])
 
-    candidates = [p for p in folder.iterdir() if _is_candidate_json(p)]
-    # Ordena por heurística de "recentes" (modificado por último)
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-
-    if not candidates:
-        print("ℹ️  Nenhum .json candidato encontrado em data/wordlists.")
-        return (None, None)
-
-    # Mostra candidatos com contagem
     print("\nArquivos encontrados em data/wordlists:")
-    info = []
-    for i, p in enumerate(candidates, 1):
-        valid, total = _validate_wordlist_file(p)
-        role = _guess_role(p.name) or "?"
-        print(f"  {i:>2}) {p.name}  — itens: {valid}/{total}  — sugestão: {role}")
-        info.append((p, valid, total, role))
+    details: Dict[str, Tuple[int,int]] = {}
+    for i, p in enumerate(files, 1):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                arr = json.load(f)
+            valid = sum(1 for it in arr if isinstance(it, dict) and (it.get('word') or ""))
+            total = len(arr) if isinstance(arr, list) else 0
+        except Exception:
+            valid, total = 0, 0
+        details[p.name] = (valid, total)
+        print(f"   {i}) {p.name:<28}  — itens: {valid}/{total}  — sugestão: {_suggest_role(p.name)}")
 
-    # Tenta escolher automaticamente se houver 2 com papéis claros
-    commons = [p for (p, _, _, role) in info if role == "common"]
-    themeds = [p for (p, _, _, role) in info if role == "themed"]
-    if len(commons) == 1 and len(themeds) == 1:
-        print(f"Proposta: CORINGA = {commons[0].name} ; TEMÁTICO = {themeds[0].name}")
-        if _ask_bool("Usar essa combinação?", default=True):
-            return (str(commons[0]), [str(themeds[0])])
+    common = None
+    themed = None
+    for p in files:
+        role = _suggest_role(p.name)
+        if role == "common" and common is None:
+            common = p
+        if role == "themed" and themed is None:
+            themed = p
+    if common and themed:
+        print(f"Proposta: CORINGA = {common.name} ; TEMÁTICO = {themed.name}")
+        if _ask_yes_no("Usar essa combinação?", True):
+            return (str(common), [str(themed)])
 
-    # Caso geral: deixar o usuário escolher
-    idx_common = _ask_then_confirm_str("Escolha o número do arquivo CORINGA (ex: 1)", default="1")
-    try:
-        i_common = int(idx_common)
-        common_path = str(candidates[i_common - 1])
-    except Exception:
-        print("Seleção inválida para CORINGA.")
-        return (None, None)
+    # escolha manual
+    raw_c = input("Informe o NÚMERO do CORINGA (ou Enter para pular): ").strip()
+    common_sel = None
+    if raw_c:
+        try:
+            idx = int(raw_c) - 1
+            if 0 <= idx < len(files):
+                common_sel = files[idx]
+        except ValueError:
+            pass
+    raw_t = input("Informe o(s) NÚMERO(s) do(s) TEMÁTICO(s), separados por ';': ").strip()
+    themed_sel: List[Path] = []
+    if raw_t:
+        for token in raw_t.replace(",", ";").split(";"):
+            token = token.strip()
+            if not token: continue
+            try:
+                x = int(token) - 1
+                if 0 <= x < len(files):
+                    themed_sel.append(files[x])
+            except ValueError:
+                pass
 
-    idx_themed = _ask_then_confirm_str("Escolha o número do arquivo TEMÁTICO (ex: 2)", default="2")
-    try:
-        i_themed = int(idx_themed)
-        themed_path = str(candidates[i_themed - 1])
-    except Exception:
-        print("Seleção inválida para TEMÁTICO.")
-        return (None, None)
+    if common_sel or themed_sel:
+        return (str(common_sel) if common_sel else None, [str(p) for p in themed_sel])
 
-    if i_common == i_themed:
-        print("Os arquivos CORINGA e TEMÁTICO não podem ser o mesmo.")
-        return (None, None)
-
-    return (common_path, [themed_path])
+    print("Seleção inválida.")
+    return (None, [])
 
 
-# -------------------- Menu --------------------
-
+# ----------------- Menu -----------------
 class Menu:
-    """
-    CLI do Engligen.
-    - Geração de Crossword / WordSearch
-    - Wizard de NOVA UNIDADE (cria config_uN.json e ativa)
-    """
     def __init__(self) -> None:
         self.app = EngligenApp()
         self.project_root = self.app.project_root
 
-    def _exibir_menu(self) -> None:
-        print("\n╔═════════════════════════════════════╗")
-        print("║   Engligen: Gerador de Exercícios   ║")
-        print("╠═════════════════════════════════════╣")
-        print("║ 1) Gerar Palavra-Cruzada (Crossword)║")
-        print("║ 2) Gerar Caça-Palavras (WordSearch) ║")
-        print("║ 3) Iniciar NOVA UNIDADE (assistente)║")
-        print("║ 4) Sair                             ║")
-        print("╚═════════════════════════════════════╝")
-
     def run(self) -> None:
         while True:
-            self._exibir_menu()
-            escolha = input("Escolha uma opção: ").strip()
-            if escolha == "1":
+            print("\n╔═════════════════════════════════════╗")
+            print("║   Engligen: Gerador de Exercícios   ║")
+            print("╠═════════════════════════════════════╣")
+            print("║ 1) Gerar Palavra-Cruzada (Crossword)║")
+            print("║ 2) Gerar Caça-Palavras (WordSearch) ║")
+            print("║ 3) Iniciar NOVA UNIDADE (assistente)║")
+            print("║ 4) Sair                             ║")
+            print("╚═════════════════════════════════════╝")
+            op = input("Escolha uma opção: ").strip()
+            if op == "1":
                 self._get_input_crossword()
-            elif escolha == "2":
+            elif op == "2":
                 self._get_input_wordsearch()
-            elif escolha == "3":
-                self._wizard_nova_unidade()
-            elif escolha == "4":
+            elif op == "3":
+                self._wizard_unidade()
+            elif op == "4":
                 print("\nSaindo. Até mais!")
-                break
+                return
             else:
-                print("\nOpção inválida. Tente novamente.")
+                print("Opção inválida.")
 
-    # -------- Opção 1: Crossword --------
-
+    # ---------- Crossword ----------
     def _get_input_crossword(self) -> None:
         print("\n▶ Gerar Palavra-Cruzada")
-        basename = _ask_then_confirm_str("Insira o nome-base do arquivo (ex: cw_01_unit_01)", default="teste")
-        altura = int(_ask_then_confirm_float("Altura (linhas)", default=20, min_value=5))
-        largura = int(_ask_then_confirm_float("Largura (colunas)", default=15, min_value=5))
-        seed_str = _ask_then_confirm_str("Seed (vazio = aleatória)", default="", allow_empty=True)
-        seed = int(seed_str) if seed_str else None
+        basename = _ask("Insira o nome-base do arquivo (ex: cw_01_unit_01)", default="teste")
+        if not _confirm_value("nome-base", basename):
+            print("Operação cancelada."); return
 
-        # Descoberta automática
-        common_override = None
-        themed_override_list: Optional[List[str]] = None
-        if _ask_bool("Tentar DETECTAR automaticamente os arquivos em data/wordlists?", default=True):
-            common_path, themed_paths = _auto_detect_wordlists(self.project_root)
-            if common_path and themed_paths:
-                common_override = common_path
-                themed_override_list = themed_paths
-            else:
-                # Nenhuma detecção válida -> perguntar o que fazer
-                print("\nNenhuma combinação confirmada.")
-                print("Opções: (m) inserir caminhos manualmente | (a) gerar automaticamente (IA) | (c) cancelar")
-                choice = input("Escolha [m/a/c]: ").strip().lower()
-                if choice == "a":
-                    print("⚠️  Ainda não implementado: geração automática com IA.")
-                    print("Por favor, informe os caminhos manualmente.")
-                    choice = "m"
-                if choice == "c":
-                    print("Operação cancelada.")
-                    return
-                if choice == "m":
-                    co = _ask_then_confirm_str("Caminho do CORINGA (.json) [vazio = config]", default="", allow_empty=True)
-                    common_override = co if co else None
-                    to = _ask_then_confirm_str("Caminhos TEMÁTICOS (.json), separados por ';'", default="", allow_empty=True)
-                    themed_override_list = [p.strip() for p in to.split(';') if p.strip()] if to else None
-        else:
-            # Fluxo antigo: perguntar se quer arquivos personalizados
-            use_custom = _ask_bool("Usar ARQUIVOS personalizados nesta geração?", default=False)
-            if use_custom:
-                co = _ask_then_confirm_str("Caminho do CORINGA (.json) [vazio = config]", default="", allow_empty=True)
-                common_override = co if co else None
-                to = _ask_then_confirm_str("Caminhos TEMÁTICOS (.json), separados por ';'", default="", allow_empty=True)
-                themed_override_list = [p.strip() for p in to.split(';') if p.strip()] if to else None
+        altura = _ask_int("Altura (linhas)", 20)
+        if not _ask_yes_no(f"Confirma o valor: {float(altura)}?", True): return
+        largura = _ask_int("Largura (colunas)", 15)
+        if not _ask_yes_no(f"Confirma o valor: {float(largura)}?", True): return
 
-        # Overrides visuais
-        ink = _ask_bool("Usar modo ink-saver (fundo branco)?", default=True)
-        header = _ask_then_confirm_str("Header (vazio = usar config)", default="", allow_empty=True)
-        header = header if header else None
+        # Mantido por compatibilidade visual (não é usado pelo app)
+        seed = _ask("Seed (vazio = aleatória)", default="").strip() or None
+        if seed and not _ask_yes_no(f"Confirma o valor: '{seed}'?", True): return
 
-        # Prefill por PALAVRAS
-        n_words = int(_ask_then_confirm_float("Quantas PALAVRAS completas deseja exibir? [0 = nenhuma]", default=0, min_value=0))
-        prefer_thematic = _ask_bool("Preferir palavras do banco TEMÁTICO ao escolher as exibidas?", default=True) if n_words > 0 else True
+        common_file = None
+        themed_files: List[str] = []
+        if _ask_yes_no("Tentar DETECTAR automaticamente os arquivos em data/wordlists?", True):
+            common_file, themed_files = _pick_files_interactive(self.project_root / "data" / "wordlists")
+
+        # Mantido por compatibilidade visual (o renderer usa ink-saver por padrão no app)
+        _ = _ask_yes_no("Usar modo ink-saver (fundo branco)?", True)
+
+        header = _ask("Header (vazio = usar config)", default="")
+        if not _ask_yes_no(f"Confirma o valor: '{header}'?", True): return
+
+        # Prefill por PALAVRAS inteiras
+        n_words = _ask_int("Quantas PALAVRAS completas deseja exibir? [0 = nenhuma]", 0)
+        if not _ask_yes_no(f"Confirma o valor: {float(n_words)}?", True): return
+        prefer_thematic = _ask_yes_no("Preferir palavras do banco TEMÁTICO ao escolher as exibidas?", True)
 
         ok = self.app.executar_gerador_crossword(
             output_basename=basename,
-            altura=altura,
-            largura=largura,
-            seed=seed,
-            reset=False,
-            ink_saver=ink,
-            header_text=header,
+            altura=int(altura),
+            largura=int(largura),
+            header_text=(header if header != "" else None),
+            # overrides de arquivo (podem ser None)
+            common_file_override=common_file,
+            themed_files_override=themed_files,
+            # prefill por PALAVRAS
             prefill_words_count=int(n_words),
-            prefill_prefer_thematic=bool(prefer_thematic),
-            common_file_override=common_override,
-            themed_files_override=themed_override_list,
+            prefill_prefer_thematic=prefer_thematic,
+            reset=False,
         )
         if not ok:
             print("✖ Operação não concluída. Veja mensagens acima.")
 
-    # -------- Opção 2: WordSearch --------
-
+    # ---------- WordSearch ----------
     def _get_input_wordsearch(self) -> None:
         print("\n▶ Gerar Caça-Palavras")
-        basename = _ask_then_confirm_str("Insira o nome-base do arquivo (ex: ws_01_unit_01)", default="wordsearch")
-        size = int(_ask_then_confirm_float("Tamanho da grade (NxN)", default=15, min_value=5))
+        basename = _ask("Insira o nome-base do arquivo (ex: ws_01_unit_01)", default="wordsearch")
+        if not _confirm_value("nome-base", basename):
+            print("Operação cancelada."); return
 
-        # Descoberta automática
-        common_override = None
-        themed_override_list: Optional[List[str]] = None
-        if _ask_bool("Tentar DETECTAR automaticamente os arquivos em data/wordlists?", default=True):
-            common_path, themed_paths = _auto_detect_wordlists(self.project_root)
-            if common_path and themed_paths:
-                common_override = common_path
-                themed_override_list = themed_paths
-            else:
-                print("\nNenhuma combinação confirmada.")
-                print("Opções: (m) inserir caminhos manualmente | (a) gerar automaticamente (IA) | (c) cancelar")
-                choice = input("Escolha [m/a/c]: ").strip().lower()
-                if choice == "a":
-                    print("⚠️  Ainda não implementado: geração automática com IA.")
-                    print("Por favor, informe os caminhos manualmente.")
-                    choice = "m"
-                if choice == "c":
-                    print("Operação cancelada.")
-                    return
-                if choice == "m":
-                    co = _ask_then_confirm_str("Caminho do CORINGA (.json) [vazio = config]", default="", allow_empty=True)
-                    common_override = co if co else None
-                    to = _ask_then_confirm_str("Caminhos TEMÁTICOS (.json), separados por ';'", default="", allow_empty=True)
-                    themed_override_list = [p.strip() for p in to.split(';') if p.strip()] if to else None
-        else:
-            use_custom = _ask_bool("Usar ARQUIVOS personalizados nesta geração?", default=False)
-            if use_custom:
-                co = _ask_then_confirm_str("Caminho do CORINGA (.json) [vazio = config]", default="", allow_empty=True)
-                common_override = co if co else None
-                to = _ask_then_confirm_str("Caminhos TEMÁTICOS (.json), separados por ';'", default="", allow_empty=True)
-                themed_override_list = [p.strip() for p in to.split(';') if p.strip()] if to else None
+        size = _ask_int("Tamanho da grade (NxN)", 15)
+        if not _ask_yes_no(f"Confirma o valor: {float(size)}?", True): return
 
-        use_fallback = _ask_bool("Se esgotar temáticas, completar com banco coringa?", default=True)
+        # seleção de arquivos
+        common_file = None
+        themed_files: List[str] = []
+        if _ask_yes_no("Tentar DETECTAR automaticamente os arquivos em data/wordlists?", True):
+            common_file, themed_files = _pick_files_interactive(self.project_root / "data" / "wordlists")
+
+        fallback = _ask_yes_no("Se esgotar temáticas, completar com banco coringa?", True)
+
+        # ---- NOVOS KNOBS: densidade e seed ----
+        print("\nDensidade do caça-palavras:")
+        print("  m) Limitar por quantidade (max_words)")
+        print("  o) Alvo de ocupação (target_occupancy)")
+        print("  p) Padrão")
+        modo = input("Escolha [m/o/p] (Enter = m): ").strip().lower() or "m"
+
+        max_words: Optional[int] = None
+        target_occupancy: Optional[float] = None
+        if modo == "m":
+            max_words = _ask_int("max_words (quantas palavras no máximo)", 24)
+        elif modo == "o":
+            target_occupancy = _ask_float("target_occupancy (0.10–0.75 recomendado)", 0.40)
+
+        seed_txt = _ask("Seed (vazio = aleatória)", default="42").strip()
+        seed_val = int(seed_txt) if seed_txt != "" else None
+
+        # estilo do gabarito
+        def ask_style() -> str:
+            while True:
+                s = input("Estilo do destaque nas RESPOSTAS (fill=quadrinhos | stroke=linha) [fill]: ").strip().lower()
+                if s == "": return "fill"
+                if s in ("fill", "stroke"): return s
+                print("Digite 'fill' ou 'stroke'.")
+        style = ask_style()
+        stroke = 5
+        if style == "stroke":
+            while True:
+                raw = input("Espessura da LINHA (px) [5]: ").strip()
+                if raw == "": break
+                try:
+                    v = int(raw)
+                    if 1 <= v <= 20:
+                        stroke = v; break
+                except ValueError:
+                    pass
+                print("Informe um inteiro entre 1 e 20.")
 
         ok = self.app.executar_gerador_wordsearch(
             output_basename=basename,
-            size=size,
-            allow_fallback_common=use_fallback,
-            common_file_override=common_override,
-            themed_files_override=themed_override_list,
+            size=int(size),
+            allow_fallback_common=fallback,
+            common_file_override=common_file,
+            themed_files_override=themed_files,
+            highlight_style=style,
+            stroke_width=stroke,
+            # novos knobs:
+            target_occupancy=target_occupancy,
+            max_words=max_words,
+            seed=seed_val,
         )
         if not ok:
             print("✖ Operação não concluída. Veja mensagens acima.")
 
-    # -------- Opção 3: Wizard Nova Unidade --------
+    # ---------- Wizard de unidade ----------
+    def _wizard_unidade(self) -> None:
+        print("\n▶ Iniciar NOVA UNIDADE")
+        slug = _ask("Slug da unidade (ex: u1)", default="u1")
+        name = _ask("Nome da unidade (ex: Adam Smith)", default="Unit 1 — Adam Smith")
+        themed = _ask("Arquivo TEMÁTICO (JSON)", default="data/wordlists/unit01_thematic_words.json")
+        include_prev = _ask_yes_no("Incluir conteúdos de unidades anteriores?", True)
 
-    def _wizard_nova_unidade(self) -> None:
-        print("\n▶ Assistente: Iniciar NOVA UNIDADE")
-        cfg: Dict[str, Any] = self.app.config or {}
-        course = cfg.get("course") or {}
-        units = course.get("units") or []
-        if not course:
-            course = {"include_previous_units": True, "units": []}
-            cfg["course"] = course
+        cfg = self.app._load_config() or {}
+        cfg.setdefault("course", {})
+        cfg["course"]["active_unit"] = slug
+        cfg["course"]["include_previous_units"] = include_prev
+        units = cfg["course"].get("units") or []
+        # substitui ou adiciona
+        found = False
+        for u in units:
+            if u.get("slug") == slug:
+                u["name"] = name
+                u["themed_words_file"] = themed
+                found = True
+                break
+        if not found:
+            units.append({"slug": slug, "name": name, "themed_words_file": themed})
+        cfg["course"]["units"] = units
 
-        include_prev_default = bool(course.get("include_previous_units", True))
+        # salva como ativo
+        self.app._save_config(cfg)
+        print("✔️  Configuração salva em data/config.json e ativada.")
 
-        next_index = len(units) + 1
-        default_slug = f"u{next_index}"
-        default_name = f"Unit {next_index} – <tema>"
-        default_file = f"data/wordlists/unidade_{next_index}_word_bank.json"
 
-        print("\nVamos configurar a nova unidade. Primeiro você informa o valor, depois confirma.")
-
-        slug = _ask_then_confirm_str("Slug da unidade", default=default_slug)
-        name = _ask_then_confirm_str("Nome/título da unidade", default=default_name)
-        themed_file = _ask_then_confirm_str("Arquivo temático (JSON)", default=default_file)
-
-        include_prev = _ask_bool("Incluir conteúdo das unidades anteriores nesta unidade?", default=include_prev_default)
-
-        header_sug = f"Crossword – {name}"
-        header_text = _ask_then_confirm_str("Header (título no topo)", default=header_sug)
-        watermark_text = _ask_then_confirm_str("Watermark (vazio = nenhuma)", default="", allow_empty=True)
-        watermark_text = watermark_text if watermark_text else None
-
-        print("\nPrefill padrão (salvo no config; pode ser sobrescrito na geração):")
-        use_first = _ask_bool("Usar prefill 'first' (1ª letra)?", default=False)
-        prefill_cfg: Dict[str, Any] = {}
-        if use_first:
-            inc_across = _ask_bool("Prefill Across?", default=True)
-            inc_down = _ask_bool("Prefill Down?", default=False)
-            prefill_cfg = {"mode": "first", "include_across": inc_across, "include_down": inc_down}
-        else:
-            prefill_cfg = {"mode": None}
-
-        print("\nResumo da nova unidade:")
-        print(f"  • slug            : {slug}")
-        print(f"  • name            : {name}")
-        print(f"  • themed file     : {themed_file}")
-        print(f"  • include_prev    : {include_prev}")
-        print(f"  • header          : {header_text}")
-        print(f"  • watermark       : {watermark_text}")
-        print(f"  • prefill         : {prefill_cfg}")
-        if not _ask_bool("Confirma criação/ativação desta unidade?", default=True):
-            print("Operação cancelada.")
-            return
-
-        new_unit = {"slug": slug, "name": name, "themed_words_file": themed_file}
-        units.append(new_unit)
-        course["units"] = units
-        course["include_previous_units"] = include_prev
-        course["active_unit"] = slug
-        cfg["course"] = course
-
-        renderer = cfg.get("renderer") or {}
-        renderer["ink_saver"] = True if renderer.get("ink_saver") is None else bool(renderer.get("ink_saver"))
-        renderer["header_text"] = header_text
-        renderer["watermark_text"] = watermark_text
-        renderer.setdefault("arrow_gap_px", 2)
-        renderer.setdefault("corner_pad", 2)
-        renderer["background_style"] = renderer.get("background_style", "plain")
-        renderer["prefill"] = prefill_cfg
-        cfg["renderer"] = renderer
-
-        cfg_dir = self.project_root / "data"
-        cfg_dir.mkdir(parents=True, exist_ok=True)
-
-        profile_path = cfg_dir / f"config_{slug}.json"
-        with open(profile_path, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2, ensure_ascii=False)
-
-        active_path = cfg_dir / "config.json"
-        shutil.copyfile(profile_path, active_path)
-
-        print("\n✔ Nova unidade criada e ativada!")
-        print(f"   Perfil salvo   : {profile_path}")
-        print(f"   Perfil ativo   : {active_path}")
-        print("   Agora gere a Crossword (opção 1).")
+# compatível com o seu main atual: engligen.main importa este módulo e chama run()
+def run() -> None:
+    Menu().run()

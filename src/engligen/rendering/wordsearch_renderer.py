@@ -1,112 +1,149 @@
 from __future__ import annotations
-import os
-from typing import Dict, Any, Tuple
+from typing import List, Tuple
 from PIL import Image, ImageDraw, ImageFont
 
+
 class WordSearchRenderer:
-    BACKGROUND_COLOR = (255, 255, 255)
-    GRID_COLOR = (30, 30, 30)
-    TEXT_COLOR = (0, 0, 0)
-    ANSWER_HIGHLIGHT_COLOR = (220, 240, 255)
+    """
+    Renderizador de caça-palavras:
+      - Exercício: grade + letras
+      - Respostas: destaques (fill) OU linhas (stroke) nas palavras colocadas
+    """
 
-    def __init__(self, wordsearch, cell_size: int = 40, padding: int = 25):
-        self.wordsearch = wordsearch
-        self.cell_size = cell_size
-        self.padding = padding
-        try:
-            self.font = ImageFont.truetype("arial.ttf", 24)
-        except Exception:
-            self.font = ImageFont.load_default()
-        self.image_width = padding * 2 + self.wordsearch.size * cell_size
-        self.image_height = padding * 2 + self.wordsearch.size * cell_size
+    BACKGROUND = (255, 255, 255)
+    GRID = (30, 30, 30)
+    TEXT = (0, 0, 0)
+    HIGHLIGHT_FILL = (220, 240, 255)   # azul claro
+    HIGHLIGHT_STROKE = (200, 0, 0)     # vermelho padrão
 
-    def generate_image(self, filename: str, answers: bool = False, dpi: int = 300):
-        image = Image.new("RGB", (self.image_width, self.image_height), self.BACKGROUND_COLOR)
-        draw = ImageDraw.Draw(image)
+    def __init__(
+        self,
+        wordsearch,                 # instância de WordSearch
+        *,
+        cell_size: int = 40,
+        padding: int = 25,
+        highlight_style: str = "fill",   # "fill" ou "stroke"
+        stroke_width: int = 5,
+        font_path: str | None = None
+    ) -> None:
+        self.ws = wordsearch
+        self.n = int(wordsearch.size)
+        self.cell = int(cell_size)
+        self.pad = int(padding)
+        self.style = str(highlight_style or "fill").lower()
+        self.stroke_width = int(stroke_width)
+        self.font_path = font_path
 
-        if answers:
-            self._draw_answers(draw)
+        # fonte monoespaçada; fallback para default do PIL
+        self.font = None
+        if self.font_path:
+            try:
+                self.font = ImageFont.truetype(self.font_path, size=int(self.cell * 0.55))
+            except Exception:
+                self.font = None
+        if self.font is None:
+            try:
+                self.font = ImageFont.truetype("DejaVuSansMono.ttf", size=int(self.cell * 0.55))
+            except Exception:
+                self.font = ImageFont.load_default()
+
+    # ---------- API ----------
+
+    def generate_image(self, filename: str, answers: bool = False) -> None:
+        W = H = self.pad * 2 + self.n * self.cell
+        img = Image.new("RGB", (W, H), self.BACKGROUND)
+        draw = ImageDraw.Draw(img)
+
         self._draw_grid(draw)
 
-        out_dir = os.path.dirname(filename)
-        if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
-        image.save(filename, dpi=(dpi, dpi))
-        print(f"🖼️  Imagem '{os.path.basename(filename)}' gerada com sucesso!")
+        # Se for gabarito com FILL, desenhe os destaques ANTES das letras (para não cobri-las)
+        if answers and self.style == "fill":
+            self._draw_answers_fill(draw)
 
-    # --- helpers de texto (compatível Pillow ≥10) ---
-    def _text_size(self, draw: ImageDraw.ImageDraw, text: str) -> Tuple[int, int]:
-        try:
-            l, t, r, b = draw.textbbox((0, 0), text, font=self.font)
-            return (r - l, b - t)
-        except Exception:
-            if hasattr(self.font, "getbbox"):
-                l, t, r, b = self.font.getbbox(text)
-                return (r - l, b - t)
-            return (len(text) * max(6, getattr(self.font, "size", 12) // 2), getattr(self.font, "size", 12))
+        self._draw_letters(draw)
 
-    def _draw_grid(self, draw: ImageDraw.ImageDraw):
-        for r in range(self.wordsearch.size):
-            for c in range(self.wordsearch.size):
-                x0 = self.padding + c * self.cell_size
-                y0 = self.padding + r * self.cell_size
-                x1 = x0 + self.cell_size
-                y1 = y0 + self.cell_size
-                draw.rectangle([x0, y0, x1, y1], outline=self.GRID_COLOR, width=1)
+        # Se for gabarito com STROKE, desenhe as linhas por cima
+        if answers and self.style != "fill":
+            self._draw_answers_stroke(draw)
 
-                ch = self.wordsearch.grid[r][c]
-                if ch:
-                    w, h = self._text_size(draw, ch)
-                    tx = x0 + (self.cell_size - w) / 2
-                    ty = y0 + (self.cell_size - h) / 2
-                    draw.text((tx, ty), ch, fill=self.TEXT_COLOR, font=self.font)
+        img.save(filename, format="PNG")
 
-    def _dir_from_arrow(self, arrow: str) -> Tuple[int, int]:
-        mapping = {"→": (0, 1), "←": (0, -1), "↓": (1, 0), "↑": (-1, 0),
-                   "↘": (1, 1), "↖": (-1, -1), "↙": (1, -1), "↗": (-1, 1)}
-        return mapping.get(arrow, (0, 0))
+    # ---------- desenho básico ----------
 
-    def _find_word_start(self, word: str, dr: int, dc: int):
-        n = self.wordsearch.size
-        grid = self.wordsearch.grid
-        L = len(word)
-        for r in range(n):
-            for c in range(n):
-                er = r + (L - 1) * dr
-                ec = c + (L - 1) * dc
-                if not (0 <= er < n and 0 <= ec < n):
+    def _draw_grid(self, draw: ImageDraw.ImageDraw) -> None:
+        # borda externa
+        x0 = self.pad
+        y0 = self.pad
+        x1 = self.pad + self.n * self.cell
+        y1 = self.pad + self.n * self.cell
+        draw.rectangle([x0, y0, x1, y1], outline=self.GRID, width=1)
+
+        # linhas/colunas
+        for i in range(1, self.n):
+            # horizontais
+            y = self.pad + i * self.cell
+            draw.line([self.pad, y, self.pad + self.n * self.cell, y], fill=self.GRID, width=1)
+            # verticais
+            x = self.pad + i * self.cell
+            draw.line([x, self.pad, x, self.pad + self.n * self.cell], fill=self.GRID, width=1)
+
+    def _draw_letters(self, draw: ImageDraw.ImageDraw) -> None:
+        """
+        Pillow 11 removeu `draw.textsize`. Use `font.getbbox` (ou `draw.textbbox` como fallback)
+        e centralize compensando o offset do bbox (x0,y0) do glifo.
+        """
+        for r in range(self.n):
+            for c in range(self.n):
+                ch = self.ws.grid[r][c]
+                if not ch:
                     continue
-                ok = True
-                for i, ch in enumerate(word):
-                    rr = r + i * dr
-                    cc = c + i * dc
-                    if grid[rr][cc] != ch:
-                        ok = False; break
-                if ok:
-                    return (r, c)
-        return None
+                cx = self.pad + c * self.cell + self.cell / 2
+                cy = self.pad + r * self.cell + self.cell / 2
 
-    def _draw_answers(self, draw: ImageDraw.ImageDraw):
-        for word, info in self.wordsearch.placed_words.items():
-            if isinstance(info, dict):
-                r = info.get('r'); c = info.get('c'); dr = info.get('dr'); dc = info.get('dc')
-                if None in (r, c, dr, dc):  # defensivo
-                    continue
-            else:
-                # compat.: formato antigo com seta
-                arrow = str(info)
-                dr, dc = self._dir_from_arrow(arrow)
-                if (dr, dc) == (0, 0):
-                    continue
-                start = self._find_word_start(word, dr, dc)
-                if start is None:
-                    continue
-                r, c = start
+                # mede o glifo
+                try:
+                    # preferir getbbox pela estabilidade
+                    bx0, by0, bx1, by1 = self.font.getbbox(ch)
+                except Exception:
+                    # fallback: usa o draw.textbbox
+                    bx0, by0, bx1, by1 = draw.textbbox((0, 0), ch, font=self.font)
 
-            for i in range(len(word)):
-                rr = r + i * dr; cc = c + i * dc
-                x0 = self.padding + cc * self.cell_size
-                y0 = self.padding + rr * self.cell_size
-                x1 = x0 + self.cell_size
-                y1 = y0 + self.cell_size
-                draw.rectangle([x0, y0, x1, y1], fill=self.ANSWER_HIGHLIGHT_COLOR)
+                w = bx1 - bx0
+                h = by1 - by0
+                # compensar o offset de origem do bbox (bx0,by0)
+                x = cx - w / 2 - bx0
+                y = cy - h / 2 - by0
+                draw.text((x, y), ch, fill=self.TEXT, font=self.font)
+
+    # ---------- gabarito ----------
+
+    def _collect_placements(self) -> List[Tuple[str, int, int, int, int, int]]:
+        placements = []
+        for w, pos in (self.ws.placed_words or {}).items():
+            r, c, dr, dc = pos["r"], pos["c"], pos["dr"], pos["dc"]
+            L = len(w)
+            placements.append((w, r, c, dr, dc, L))
+        return placements
+
+    def _draw_answers_fill(self, draw: ImageDraw.ImageDraw) -> None:
+        cells: list[tuple[int, int]] = []
+        for _, r, c, dr, dc, L in self._collect_placements():
+            rr, cc = r, c
+            for _ in range(L):
+                cells.append((rr, cc))
+                rr += dr
+                cc += dc
+        for rr, cc in cells:
+            x0 = self.pad + cc * self.cell
+            y0 = self.pad + rr * self.cell
+            x1 = x0 + self.cell
+            y1 = y0 + self.cell
+            draw.rectangle([x0, y0, x1, y1], fill=self.HIGHLIGHT_FILL)
+
+    def _draw_answers_stroke(self, draw: ImageDraw.ImageDraw) -> None:
+        for _, r, c, dr, dc, L in self._collect_placements():
+            x0 = self.pad + (c + 0.5) * self.cell
+            y0 = self.pad + (r + 0.5) * self.cell
+            x1 = self.pad + (c + (L - 1) * dc + 0.5) * self.cell
+            y1 = self.pad + (r + (L - 1) * dr + 0.5) * self.cell
+            draw.line([x0, y0, x1, y1], fill=self.HIGHLIGHT_STROKE, width=self.stroke_width)
