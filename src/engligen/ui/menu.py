@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, Set
 
 from engligen.app import EngligenApp
 
@@ -131,6 +131,40 @@ def _pick_files_interactive(base: Path) -> Tuple[Optional[str], List[str]]:
     return (None, [])
 
 
+# ----------------- util local para reexecução assistida -----------------
+def _to_abs(base: Path, maybe: Optional[str]) -> Optional[Path]:
+    if not maybe:
+        return None
+    p = Path(maybe)
+    return p if p.is_absolute() else (base / p)
+
+def _load_words_only(fp: Path) -> List[str]:
+    try:
+        with open(fp, "r", encoding="utf-8") as f:
+            arr = json.load(f)
+        out = []
+        if isinstance(arr, list):
+            for it in arr:
+                if isinstance(it, dict):
+                    w = (it.get("word") or "").strip().upper()
+                    if w:
+                        out.append(w)
+        return out
+    except Exception:
+        return []
+
+def _read_used(path: Path) -> Set[str]:
+    try:
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                arr = json.load(f)
+            if isinstance(arr, list):
+                return set((x or "").upper() for x in arr if isinstance(x, str))
+    except Exception:
+        pass
+    return set()
+
+
 # ----------------- Menu -----------------
 class Menu:
     def __init__(self) -> None:
@@ -161,6 +195,102 @@ class Menu:
                 print("Opção inválida.")
 
     # ---------- Crossword ----------
+    def _run_crossword_with_recovery(
+        self,
+        *,
+        basename: str,
+        altura: int,
+        largura: int,
+        header: Optional[str],
+        common_file: Optional[str],
+        themed_files: List[str],
+        prefill_words: int,
+        prefer_thematic: bool,
+    ) -> bool:
+        """
+        Executa o gerador. Se falhar, verifica se o motivo provável é falta de âncora
+        temática (lista temática esgotada/curta) e oferece usar o CORINGA como 'temático'
+        apenas nesta execução. Em caso afirmativo, reexecuta automaticamente.
+        """
+        # 1) tentativa normal
+        ok = self.app.executar_gerador_crossword(
+            output_basename=basename,
+            altura=int(altura),
+            largura=int(largura),
+            header_text=(header if header != "" else None),
+            common_file_override=common_file,
+            themed_files_override=themed_files,
+            prefill_words_count=int(prefill_words),
+            prefill_prefer_thematic=prefer_thematic,
+            reset=False,
+        )
+        if ok:
+            return True
+
+        # 2) diagnóstico leve dos arquivos escolhidos
+        base = self.project_root
+        themed_abs: List[Path] = []
+        for t in themed_files or []:
+            p = _to_abs(base, t)
+            if p and p.exists():
+                themed_abs.append(p)
+
+        common_abs = _to_abs(base, common_file) if common_file else None
+
+        # carrega palavras e aplica filtro de usadas
+        used_them = _read_used(self.app.used_thematic_path)
+        used_com = _read_used(self.app.used_common_path)
+
+        themed_avail: List[str] = []
+        for fp in themed_abs:
+            themed_avail.extend([w for w in _load_words_only(fp) if w not in used_them])
+
+        common_avail: List[str] = []
+        if common_abs and common_abs.exists():
+            common_avail = [w for w in _load_words_only(common_abs) if w not in used_com]
+
+        # sinal de problema típico: não há temáticas disponíveis (após histórico)
+        if len(themed_avail) == 0:
+            print("\n❌ Falha ao gerar a cruzadinha com as palavras TEMÁTICAS disponíveis.")
+            if not common_avail:
+                print("   ➤ Não há palavras no CORINGA para ajudar na inicialização.")
+                print("   ✖ Operação não concluída. Ajuste os bancos/seleção e tente novamente.")
+                return False
+
+            print("   Causa provável: a lista temÁtica ativa está vazia (ou toda usada).")
+            print("   Proposta de correção automática:")
+            print("     • Usar o arquivo CORINGA como fonte de sementes 'temáticas' nesta execução;")
+            print("       (os arquivos originais NÃO serão alterados).")
+            if _ask_yes_no("Aplicar esta correção e tentar novamente agora?", True):
+                # reexecuta adicionando o common como 'temático' (além dos temáticos originais)
+                themed_over = list(themed_files or [])
+                if common_file:
+                    themed_over = themed_over + [common_file]
+                ok2 = self.app.executar_gerador_crossword(
+                    output_basename=basename,
+                    altura=int(altura),
+                    largura=int(largura),
+                    header_text=(header if header != "" else None),
+                    common_file_override=common_file,
+                    themed_files_override=themed_over,
+                    prefill_words_count=int(prefill_words),
+                    prefill_prefer_thematic=prefer_thematic,
+                    reset=False,
+                )
+                if ok2:
+                    print("✔️ Correção aplicada com sucesso.")
+                    return True
+                print("✖ Mesmo com a correção, não foi possível gerar a grade.")
+                return False
+            else:
+                print("✖ Operação cancelada pelo usuário.")
+                return False
+
+        # Se chegou aqui, a falha não é (apenas) falta de temáticas.
+        print("✖ Operação não concluída. Veja mensagens acima.")
+        print("   Dicas: reduza largura/altura, diminua prefill por palavras, ou troque os bancos.")
+        return False
+
     def _get_input_crossword(self) -> None:
         print("\n▶ Gerar Palavra-Cruzada")
         basename = _ask("Insira o nome-base do arquivo (ex: cw_01_unit_01)", default="teste")
@@ -192,21 +322,19 @@ class Menu:
         if not _ask_yes_no(f"Confirma o valor: {float(n_words)}?", True): return
         prefer_thematic = _ask_yes_no("Preferir palavras do banco TEMÁTICO ao escolher as exibidas?", True)
 
-        ok = self.app.executar_gerador_crossword(
-            output_basename=basename,
+        ok = self._run_crossword_with_recovery(
+            basename=basename,
             altura=int(altura),
             largura=int(largura),
-            header_text=(header if header != "" else None),
-            # overrides de arquivo (podem ser None)
-            common_file_override=common_file,
-            themed_files_override=themed_files,
-            # prefill por PALAVRAS
-            prefill_words_count=int(n_words),
-            prefill_prefer_thematic=prefer_thematic,
-            reset=False,
+            header=header,
+            common_file=common_file,
+            themed_files=themed_files,
+            prefill_words=int(n_words),
+            prefer_thematic=prefer_thematic,
         )
         if not ok:
-            print("✖ Operação não concluída. Veja mensagens acima.")
+            # _run_crossword_with_recovery já imprime mensagens detalhadas
+            pass
 
     # ---------- WordSearch ----------
     def _get_input_wordsearch(self) -> None:

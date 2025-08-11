@@ -38,12 +38,12 @@ class WordSearchRenderer:
         self.font = None
         if self.font_path:
             try:
-                self.font = ImageFont.truetype(self.font_path, size=int(self.cell * 0.55))
+                self.font = ImageFont.truetype(self.font_path, size=int(self.cell * 0.7))
             except Exception:
                 self.font = None
         if self.font is None:
             try:
-                self.font = ImageFont.truetype("DejaVuSansMono.ttf", size=int(self.cell * 0.55))
+                self.font = ImageFont.truetype("DejaVuSansMono.ttf", size=int(self.cell * 0.7))
             except Exception:
                 self.font = ImageFont.load_default()
 
