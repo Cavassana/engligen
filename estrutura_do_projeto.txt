@@ -1,43 +1,36 @@
 engligen/
 │
-├── .venv/                   # Pasta do ambiente virtual Python (isolamento de dependências)
+├── .venv/
 │
-├── data/                    # Dados de entrada, como listas de palavras
+├── data/
 │   └── wordlists/
-│       └── banco_curinga_geral.json
-│       └── capitulo1.txt
-│       └── unidade_1_word_bank.json
+│       └── ... (seus arquivos de palavras)
 │   └── config.json
 │
-├── output/                  # Onde as imagens geradas (exercícios e soluções) serão salvas
-│   └── crossword_2025-08-05.png
+├── output/
+│   └── ... (arquivos gerados)
 │
-├── src/                     # Pasta principal do código-fonte ("source")
-│   └── engligen/           # O pacote Python do nosso projeto
+├── src/
+│   └── engligen/
+│       ├── __init__.py
+│       ├── main.py          # Ponto de entrada SIMPLES da aplicação
+│       ├── app.py           # NOVO: Orquestrador principal da aplicação
 │       │
-│       ├── __init__.py      # Torna o diretório um pacote Python
-│       ├── main.py          # Ponto de entrada da aplicação (interface de linha de comando)
-│       │
-│       ├── core/            # Lógica principal, independente de interface
+│       ├── core/
 │       │   ├── __init__.py
-│       │   └── crossword.py   # Lógica para gerar a grade de palavras-cruzadas
-│       │   └── word_search.py # (Futuro) Lógica para o "caça-palavras"
+│       │   ├── crossword.py
+│       │   └── word_search.py
 │       │
-│       ├── rendering/       # Módulos responsáveis pela parte visual
+│       ├── rendering/
 │       │   ├── __init__.py
 │       │   ├── clue_generator.py
-│       │   └── image_renderer.py # Desenha a grade, palavras e pistas em uma imagem
+│       │   ├── crossword_renderer.py
+│       │   └── wordsearch_renderer.py
 │       │
-│       └── utils/           # Funções utilitárias
+│       └── ui/              # NOVO: Módulo para a interface do usuário
 │           ├── __init__.py
-│           └── file_handler.py # Funções para ler/salvar arquivos
+│           └── menu.py      # NOVO: Contém a lógica do menu interativo
 │
-├── tests/                   # Testes automatizados para garantir que o código funciona
-│   ├── __init__.py
-│   ├── test_crossword_logic.py
-│   └── test_image_renderer.py
-│
-├── .gitignore               # Arquivo para o Git ignorar pastas e arquivos (como .venv e output)
-├── pyproject.toml           # Arquivo de configuração do projeto (padrão moderno)
-└── README.md                # Documentação principal do projeto
-└── estrutura_do_projeto.txt                # Esse documento
+├── .gitignore
+├── pyproject.toml
+└── README.md

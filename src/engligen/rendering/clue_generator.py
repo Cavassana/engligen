@@ -5,13 +5,23 @@ from engligen.core.crossword import Crossword
 class ClueGenerator:
     """
     Gera um arquivo .txt com a lista de dicas em texto puro,
-    separadas por quatro direções, e mantém um mapa de posições das dicas.
+    separadas por direções, e mantém um mapa das posições numeradas.
     """
     def __init__(self, crossword_obj: Crossword, clues_map: Dict[str, str]):
         self.crossword = crossword_obj
         self.clues_map = clues_map
         self.clue_positions: Dict[Tuple[int, int], List[Dict]] = {}
         self.word_clues: Dict[str, Dict] = {}
+        
+        # --- INÍCIO DA CORREÇÃO ---
+        
+        # 1. Inicializa o atributo que estava faltando
+        self.numbering_map: Dict[Tuple[int, int], int] = {}
+
+        # 2. Chama o método de geração para popular os dados imediatamente
+        self._generate_clues()
+        
+        # --- FIM DA CORREÇÃO ---
 
     def _generate_clues(self):
         """
@@ -20,22 +30,20 @@ class ClueGenerator:
         """
         self.clue_positions.clear()
         self.word_clues.clear()
+        self.numbering_map.clear() # Limpa o mapa a cada nova geração
 
-        # Ordena as palavras pela posição para uma numeração lógica
         sorted_words = sorted(self.crossword.placed_words.items(), key=lambda item: (item[1]['row'], item[1]['col']))
         
         num = 1
-        numbered_cells = {}
-
+        # Usa o atributo da classe (self.numbering_map) em vez de uma variável local
         for word, info in sorted_words:
             r, c = info['row'], info['col']
             
-            # Reutiliza o número se a célula já tiver um
-            if (r, c) in numbered_cells:
-                clue_num = numbered_cells[(r, c)]
+            if (r, c) in self.numbering_map:
+                clue_num = self.numbering_map[(r, c)]
             else:
                 clue_num = num
-                numbered_cells[(r, c)] = clue_num
+                self.numbering_map[(r, c)] = clue_num
                 num += 1
 
             self.word_clues[word] = {
@@ -49,26 +57,25 @@ class ClueGenerator:
                 "dir": info['direction']
             })
 
-    def generate_text_file(self, filename: str = "crossword_clues.txt"):
-        """Gera o arquivo .txt com a lista de dicas em quatro seções."""
-        self._generate_clues()
-        os.makedirs("output", exist_ok=True)
+    def generate_text_file(self, filename: str):
+        """Gera o arquivo .txt com a lista de dicas."""
+        # A geração de clues já foi feita no __init__, então não precisa chamar de novo
+        
+        output_dir = os.path.dirname(filename)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
         
         dir_map = {
             "horizontal": "HORIZONTAL (Esquerda → Direita)",
             "vertical": "VERTICAL (Cima → Baixo)",
-            "horizontal_rev": "HORIZONTAL (Direita → Esquerda)",
-            "vertical_rev": "VERTICAL (Baixo → Cima)",
         }
 
-        with open(os.path.join("output", filename), "w", encoding="utf-8") as f:
+        with open(filename, "w", encoding="utf-8") as f:
             for d_name, d_key in dir_map.items():
-                # Filtra palavras para a direção atual
                 words_in_dir = {w: d for w, d in self.word_clues.items() if d["direction"] == d_name}
                 if not words_in_dir:
                     continue
                 
-                # Ordena as palavras pelo número da dica
                 sorted_clues = sorted(words_in_dir.items(), key=lambda item: item[1]['num'])
                 
                 f.write(f"{d_key}\n")
@@ -77,4 +84,4 @@ class ClueGenerator:
                     f.write(f"{clue_data['num']}. {clue_data['clue']}\n")
                 f.write("\n")
 
-        print(f"Arquivo de dicas '{filename}' gerado com sucesso!")
+        print(f"📄 Arquivo de dicas '{os.path.basename(filename)}' gerado com sucesso!")

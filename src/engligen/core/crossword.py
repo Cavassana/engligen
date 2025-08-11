@@ -19,7 +19,6 @@ def _run_single_attempt(args: Tuple) -> Optional[Dict[str, Dict]]:
     for word in other_words:
         if word in placed_words: continue
         
-        # Passamos 'placed_words' para a função de busca para verificações mais inteligentes
         best_placement = _find_best_placement_for(word, dynamic_grid, directions, themed_word_set, max_size, placed_words)
         if best_placement:
             row, col, d_name = best_placement["row"], best_placement["col"], best_placement["direction"]
@@ -28,7 +27,6 @@ def _run_single_attempt(args: Tuple) -> Optional[Dict[str, Dict]]:
             for i, char in enumerate(word):
                 dynamic_grid[(row + i * dr, col + i * dc)] = char
 
-    # A função de preenchimento agora tem critérios de qualidade
     _fill_slots(dynamic_grid, placed_words, directions, full_word_list, themed_word_set, target_density, max_size)
     
     return placed_words
@@ -50,9 +48,6 @@ def _find_best_placement_for(word: str, grid: Dict, directions: Dict, themed_set
         for (r, c), char_in_grid in grid.items():
             if char_in_grid == letter:
                 for d_name, (dr, dc) in directions.items():
-                    # --- MELHORIA 1: EVITAR SOBREPOSIÇÃO DE MESMA DIREÇÃO ---
-                    # Verifica se a célula de cruzamento já pertence a uma palavra da mesma direção.
-                    # Se sim, este posicionamento é inválido.
                     is_crossing_occupied = False
                     for p_word, p_info in placed_words.items():
                         if p_info['direction'] == d_name:
@@ -67,17 +62,15 @@ def _find_best_placement_for(word: str, grid: Dict, directions: Dict, themed_set
                                 break
                     if is_crossing_occupied:
                         continue
-                    # --- FIM DA MELHORIA 1 ---
 
                     row_start, col_start = r - i * dr, c - i * dc
                     if _can_place_dynamically(word, row_start, col_start, d_name, grid, directions, max_size, current_bounds):
                         score = _calculate_score(word, row_start, col_start, d_name, grid, directions, themed_set, current_bounds)
-                        if not best_placement or score > best_placement["score"]:
+                        if not best_placement or score > best_placement.get("score", -1):
                             best_placement = {"row": row_start, "col": col_start, "direction": d_name, "score": score}
     return best_placement
 
 def _calculate_score(word: str, r_start: int, c_start: int, d_name: str, grid: Dict, directions: Dict, themed_set: Set, bounds: Tuple) -> int:
-    """Função de pontuação original, sem alterações."""
     dr, dc = directions[d_name]
     score = 5 if word in themed_set else 0
     min_r, max_r, min_c, max_c = bounds
@@ -99,40 +92,71 @@ def _calculate_score(word: str, r_start: int, c_start: int, d_name: str, grid: D
             if grid.get((r, c + 1)): score += 1
     return score
 
-def _can_place_dynamically(word: str, r_start: int, c_start: int, d_name: str, grid: Dict, directions: Dict, max_size: Tuple[int, int], bounds: Tuple) -> bool:
-    """Função de verificação que impede aglomeração e paralelismo."""
+def _can_place_dynamically(word: str, r_start: int, c_start: int, d_name: str,
+                           grid: Dict, directions: Dict,
+                           max_size: Tuple[int, int], bounds: Tuple) -> bool:
+    """
+    Verifica se é válido posicionar `word` começando em (r_start, c_start) na direção `d_name`.
+    Regras importantes:
+      1) Não ultrapassar limites máximos da janela dinâmica.
+      2) CELULA-PREVIA e CELULA-POSTERIOR na MESMA direção devem estar vazias (ou fora da janela).
+         -> Evita gerar palavras que sejam substrings de outra já existente (ex.: 'HER' dentro de 'MOTHER').
+      3) Em células onde já há letra, ela deve coincidir e (se for célula nova) não pode haver vizinhança ortogonal preenchida.
+      4) Pelo menos uma interseção com outra palavra deve ocorrer (opcional dependendo de sua política).
+    """
     max_h, max_w = max_size
     min_r, max_r, min_c, max_c = bounds
     dr, dc = directions[d_name]
     word_len = len(word)
-    word_end_r, word_end_c = r_start + (word_len - 1) * dr, c_start + (word_len - 1) * dc
-    new_min_r, new_max_r = min(min_r, r_start, word_end_r), max(max_r, r_start, word_end_r)
-    new_min_c, new_max_c = min(min_c, c_start, word_end_c), max(max_c, c_start, word_end_c)
 
+    # Pontos inicial e final da palavra
+    word_end_r = r_start + (word_len - 1) * dr
+    word_end_c = c_start + (word_len - 1) * dc
+
+    # Expansão da janela dinâmica: rejeita se exceder o tamanho máximo
+    new_min_r = min(min_r, r_start, word_end_r)
+    new_max_r = max(max_r, r_start, word_end_r)
+    new_min_c = min(min_c, c_start, word_end_c)
+    new_max_c = max(max_c, c_start, word_end_c)
     if (new_max_r - new_min_r + 1) > max_h or (new_max_c - new_min_c + 1) > max_w:
         return False
 
+    # --- Regra de "início/fim de palavra" na mesma direção ---
+    # célula anterior ao início
     r_before, c_before = r_start - dr, c_start - dc
-    if grid.get((r_before, c_before)): 
-        return False
-    
-    r_after, c_after = r_start + word_len * dr, c_start + word_len * dc
-    if grid.get((r_after, c_after)): 
+    if grid.get((r_before, c_before)) is not None:
+        # Já tem letra imediatamente antes -> estaria no meio de outra palavra da mesma direção
         return False
 
+    # célula imediatamente após o final
+    r_after, c_after = word_end_r + dr, word_end_c + dc
+    if grid.get((r_after, c_after)) is not None:
+        # Já tem letra logo após -> também estaria colado em outra palavra (sem bloco separando)
+        return False
+
+    # Verifica sobreposições e vizinhança ortogonal nas células novas
     for i, char in enumerate(word):
-        r, c = r_start + i * dr, c_start + i * dc
-        if grid.get((r, c), char) != char: return False
-        if grid.get((r, c)) != char:
-            if d_name == "horizontal" and (grid.get((r - 1, c)) or grid.get((r + 1, c))): return False
-            if d_name == "vertical" and (grid.get((r, c - 1)) or grid.get((r, c + 1))): return False
+        r = r_start + i * dr
+        c = c_start + i * dc
+        existing = grid.get((r, c))
 
-    # --- CORREÇÃO: Bloco defeituoso que impedia a geração foi removido ---
-    
+        if existing is not None:
+            # Se existe, precisa casar exatamente
+            if existing != char:
+                return False
+            # Sobreposição total é tratada pelas checagens anterior/posterior.
+            continue
+
+        # Célula nova: não pode ter vizinhos ortogonais preenchidos
+        if d_name == "horizontal":
+            if grid.get((r - 1, c)) is not None or grid.get((r + 1, c)) is not None:
+                return False
+        else:  # vertical
+            if grid.get((r, c - 1)) is not None or grid.get((r, c + 1)) is not None:
+                return False
+
     return True
-
 def _fill_slots(grid: Dict, placed: Dict, directions: Dict, full_word_list: List[str], themed_word_set: Set, target_density: float, max_size: Tuple[int, int]):
-    """Preenche apenas os espaços que criam novas conexões úteis."""
     themed_fill_words = [w for w in full_word_list if w in themed_word_set]
     common_fill_words = [w for w in full_word_list if w not in themed_word_set]
     prioritized_list = themed_fill_words + common_fill_words
@@ -171,8 +195,6 @@ def _fill_slots(grid: Dict, placed: Dict, directions: Dict, full_word_list: List
                             if length > 2:
                                 s_r, s_c = (fixed_axis_val, slot_start_coord) if d_name == 'horizontal' else (slot_start_coord, fixed_axis_val)
                                 
-                                # --- MELHORIA 2: VERIFICAR QUALIDADE DA CONEXÃO ---
-                                # Só preenche o espaço se a nova palavra for cruzar com uma existente.
                                 creates_connection = False
                                 for i in range(length):
                                     check_r, check_c = s_r + i * dr, s_c + i * dc
@@ -183,23 +205,22 @@ def _fill_slots(grid: Dict, placed: Dict, directions: Dict, full_word_list: List
                                 
                                 if not creates_connection:
                                     slot_start_coord = -1
-                                    continue # Pula para o próximo espaço se não criar conexão.
-                                # --- FIM DA MELHORIA 2 ---
-
+                                    continue
+                                    
                                 pattern = "".join([grid.get((s_r + i * dr, s_c + i * dc)) or '.' for i in range(length)])
-                                for word in prioritized_list:
-                                    # Corrigido para lidar com o dicionário 'placed' que pode não ter a chave 'word'
-                                    if len(word) == length and word not in placed and '.' not in pattern:
-                                        placed[word] = {"row": s_r, "col": s_c, "direction": d_name}
-                                        for i, char in enumerate(word): grid[(s_r + i * dr, s_c + i * dc)] = char
-                                        was_improved = True
-                                        break
+                                if '.' not in pattern:
+                                    for word in prioritized_list:
+                                        if len(word) == length and word not in placed:
+                                            if all(pattern[i] == char for i, char in enumerate(word)):
+                                                placed[word] = {"row": s_r, "col": s_c, "direction": d_name}
+                                                for i, char_to_place in enumerate(word): grid[(s_r + i * dr, s_c + i * dc)] = char_to_place
+                                                was_improved = True
+                                                break
                             slot_start_coord = -1
                         if was_improved: break
                 if was_improved: break
             if was_improved: break
 
-# --- CLASSE PRINCIPAL (Sem alterações) ---
 class Crossword:
     def __init__(self, themed_words: List[str], common_words: List[str], num_attempts: int = 50, max_size: Tuple[int, int] = (30, 30), target_density: float = 0.7):
         self.themed_words = sorted(list(set(w.upper() for w in themed_words if len(w) > 2)), key=len, reverse=True)
@@ -226,10 +247,6 @@ class Crossword:
         for seed in words_to_try_as_seed:
             other_words = [w for w in self.full_word_list if w != seed]
             random.shuffle(other_words)
-            # Adiciona o nome da palavra ao dicionário para referência futura
-            for w in other_words:
-                if w in self.placed_words:
-                    self.placed_words[w]['word'] = w
             tasks_args.append((seed, other_words, self.themed_word_set, self.directions, self.full_word_list, self.max_size, self.target_density))
 
         print(f"⚙️  Executando {len(tasks_args)} tentativas em paralelo (limite: {self.max_size[0]}x{self.max_size[1]}, densidade alvo: {self.target_density:.0%})...")
